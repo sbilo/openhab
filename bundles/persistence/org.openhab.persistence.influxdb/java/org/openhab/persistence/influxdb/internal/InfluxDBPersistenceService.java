@@ -66,7 +66,6 @@ public class InfluxDBPersistenceService implements QueryablePersistenceService {
   private static final String DEFAULT_URL = "http://127.0.0.1:8086";
   private static final String DEFAULT_DB = "openhab";
   private static final String DEFAULT_USER = "openhab";
-  private static final String OK_STATUS = "ok";
   private static final String DIGITAL_VALUE_OFF = "0";
   private static final String DIGITAL_VALUE_ON = "1";
   private static final String VALUE_COLUMN_NAME = "value";
@@ -161,6 +160,7 @@ public class InfluxDBPersistenceService implements QueryablePersistenceService {
    */
   @Override
   public void store(Item item, String alias) {
+	logger.trace("storing value for item: {}", item);
     if (item.getState() instanceof UnDefType) {
       return;
     }
@@ -186,6 +186,7 @@ public class InfluxDBPersistenceService implements QueryablePersistenceService {
     // Object[] point = new Object[] {System.currentTimeMillis(), value};
 
     try {
+      logger.trace("storing value for item: {}", name);
       influxDB.write(dbName, "default", point);
     } catch (RuntimeException e) {
       logger.error("storing failed with exception for item: {}", name);
