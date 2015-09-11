@@ -13,13 +13,16 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 
 import org.apache.commons.lang.StringUtils;
 import org.influxdb.InfluxDB;
 import org.influxdb.InfluxDBFactory;
+import org.influxdb.dto.Point;
 import org.influxdb.dto.Pong;
-import org.influxdb.dto.Serie;
+import org.influxdb.dto.Query;
+import org.influxdb.dto.QueryResult;
+import org.influxdb.dto.QueryResult.Result;
+import org.influxdb.dto.QueryResult.Series;
 import org.openhab.core.items.Item;
 import org.openhab.core.items.ItemNotFoundException;
 import org.openhab.core.items.ItemRegistry;
@@ -116,11 +119,6 @@ public class InfluxDBPersistenceService implements QueryablePersistenceService {
     isProperlyConfigured = true;
 
     connect();
-
-    // check connection; errors will only be logged, hoping the connection will work at a later time. 
-    if ( ! checkConnection()){
-      logger.error("database connection does not work for now, will retry to use the database.");
-    }
   }
 
 	public void deactivate(final int reason) {
@@ -133,33 +131,10 @@ public class InfluxDBPersistenceService implements QueryablePersistenceService {
       // reuse an existing InfluxDB object because it has no state concerning the database
       // connection
       influxDB = InfluxDBFactory.connect(url, user, password);
+      Pong pong = influxDB.ping();
+      logger.info("Connected to influxdb {}", pong.getVersion());
     }
     connected = true;
-  }
-
-  private boolean checkConnection() {
-    boolean dbStatus = false;
-    if (! connected) {
-      logger.error("checkConnection: database is not connected");
-      dbStatus = false;
-    } else {
-      try {
-        Pong pong = influxDB.ping();
-        if (pong.getStatus().equalsIgnoreCase(OK_STATUS)) {
-          dbStatus = true;
-          logger.debug("database status is OK");
-        } else {
-          logger.error("database connection failed with status: \"{}\" response time was \"{}\"",
-              pong.getStatus(), pong.getResponseTime());
-          dbStatus = false;
-        }
-      } catch (RuntimeException e) {
-        dbStatus = false;
-        logger.error("database connection failed throwing an exception");
-        handleDatabaseException(e);
-      }
-    }
-    return dbStatus;
   }
 
   private void disconnect() {
@@ -206,15 +181,12 @@ public class InfluxDBPersistenceService implements QueryablePersistenceService {
     logger.trace("storing {} in influxdb {}", name, value);
 
     // For now time is calculated by influxdb, may be this should be configurable?
-    Serie serie = new Serie.Builder(name)
-    		.columns(VALUE_COLUMN_NAME)
-    		.values(value)
-    		.build();
+    Point point = Point.measurement(name).field(VALUE_COLUMN_NAME, value).build();
     // serie.setColumns(new String[] {"time", VALUE_COLUMN_NAME});
     // Object[] point = new Object[] {System.currentTimeMillis(), value};
 
     try {
-      influxDB.write(dbName, TimeUnit.MILLISECONDS, serie);
+      influxDB.write(dbName, "default", point);
     } catch (RuntimeException e) {
       logger.error("storing failed with exception for item: {}", name);
       handleDatabaseException(e);
@@ -323,39 +295,26 @@ public class InfluxDBPersistenceService implements QueryablePersistenceService {
       }
     }
     logger.debug("query string: {}", query.toString());
-    List<Serie> results = Collections.emptyList();
+    QueryResult queryResult = new QueryResult();
     try {
-      results = influxDB.query(dbName, query.toString(), TimeUnit.MILLISECONDS);
+      queryResult = influxDB.query(new Query(query.toString(),dbName));
     } catch (RuntimeException e) {
       logger.error("query failed with database error");
       handleDatabaseException(e);
     }
-    for (Serie result : results) {
-      String historicItemName = result.getName();
-      logger.trace("item name ", historicItemName);
+    
+    List<Result> results = queryResult.getResults();
+    
+    for(Result result : results) {
+    	for(Series series : result.getSeries()) {
+    	  String historicItemName = series.getName();
+          logger.trace("item name ", historicItemName);
+          logger.info(series.toString());
 
-      int pageCount = 0;
-      for (Map<String, Object> row : result.getRows()) {
-    	pageCount++;
-        if (pageSize != null && pageNumber == null && pageSize < pageCount) {
-          logger.debug("returning no more points pageSize {} pageCount {}", 
-        		  pageSize, pageCount);
-          break;
-        }
-        
-        Double rawTime = (Double) row.get(TIME_COLUMN_NAME);
-        Object rawValue = row.get(VALUE_COLUMN_NAME);
-                
-        logger.trace("adding historic item {}: time {} value {}", 
-        		historicItemName, rawTime, rawValue);
-        
-        Date time = new Date(rawTime.longValue());
-        State value = objectToState(rawValue, historicItemName);
-        
-        historicItems.add(new InfluxdbItem(historicItemName, value, time));
-      }
-    }
-
+          //historicItems.add(new InfluxdbItem(historicItemName, value, time));
+          }
+    	}
+    
     return historicItems;
   }
 
